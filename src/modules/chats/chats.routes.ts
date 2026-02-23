@@ -92,6 +92,7 @@ router.get(
     );
 
     const summaries: ChatSummary[] = summariesUnsorted
+      .filter((chat) => !(chat.type === ChatType.DIRECT && !chat.lastMessage))
       .sort((a, b) => {
         if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
         const aTime = a.lastMessage ? new Date(a.lastMessage.createdAt).getTime() : 0;

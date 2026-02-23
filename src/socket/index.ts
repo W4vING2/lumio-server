@@ -5,7 +5,15 @@ import { verifyAccessToken } from "../utils/jwt.js";
 
 export type LumioIo = Server<SocketClientToServer, SocketServerToClient>;
 
-const socketUsers = new Map<string, string>();
+const socketUsers = new Map<string, Set<string>>();
+
+const emitToUser = <T>(io: LumioIo, userId: string, event: keyof SocketServerToClient, payload: T): void => {
+  const socketIds = socketUsers.get(userId);
+  if (!socketIds?.size) return;
+  for (const socketId of socketIds) {
+    io.to(socketId).emit(event, payload as never);
+  }
+};
 
 export const setupSocket = (io: LumioIo): void => {
   io.use((socket, next) => {
@@ -33,9 +41,15 @@ export const setupSocket = (io: LumioIo): void => {
 
   io.on("connection", async (socket) => {
     const user = socket.data.user as { id: string; username: string };
-    socketUsers.set(user.id, socket.id);
-    await prisma.user.update({ where: { id: user.id }, data: { isOnline: true } });
-    io.emit("user_online", { userId: user.id });
+    const userSockets = socketUsers.get(user.id) ?? new Set<string>();
+    const isFirstConnection = userSockets.size === 0;
+    userSockets.add(socket.id);
+    socketUsers.set(user.id, userSockets);
+
+    if (isFirstConnection) {
+      await prisma.user.update({ where: { id: user.id }, data: { isOnline: true } });
+      io.emit("user_online", { userId: user.id });
+    }
 
     socket.on("join_chat", ({ chatId }) => {
       void socket.join(chatId);
@@ -97,30 +111,34 @@ export const setupSocket = (io: LumioIo): void => {
     });
 
     socket.on("call_offer", (payload) => {
-      const targetSocketId = socketUsers.get(payload.toUserId);
-      if (targetSocketId) io.to(targetSocketId).emit("call_offer", payload);
+      emitToUser(io, payload.toUserId, "call_offer", payload);
     });
 
     socket.on("call_answer", (payload) => {
-      const targetSocketId = socketUsers.get(payload.toUserId);
-      if (targetSocketId) io.to(targetSocketId).emit("call_answer", payload);
+      emitToUser(io, payload.toUserId, "call_answer", payload);
     });
 
     socket.on("ice_candidate", (payload) => {
-      const targetSocketId = socketUsers.get(payload.toUserId);
-      if (targetSocketId) io.to(targetSocketId).emit("ice_candidate", payload);
+      emitToUser(io, payload.toUserId, "ice_candidate", payload);
     });
 
     socket.on("call_end", ({ chatId, toUserId, reason }) => {
-      const targetSocketId = socketUsers.get(toUserId);
-      if (targetSocketId) io.to(targetSocketId).emit("call_end", { chatId, fromUserId: user.id, reason });
+      emitToUser(io, toUserId, "call_end", { chatId, fromUserId: user.id, reason });
     });
 
     socket.on("disconnect", async () => {
-      socketUsers.delete(user.id);
-      const lastSeen = new Date();
-      await prisma.user.update({ where: { id: user.id }, data: { isOnline: false, lastSeen } });
-      io.emit("user_offline", { userId: user.id, lastSeen: lastSeen.toISOString() });
+      const sockets = socketUsers.get(user.id);
+      if (sockets) {
+        sockets.delete(socket.id);
+        if (!sockets.size) {
+          socketUsers.delete(user.id);
+          const lastSeen = new Date();
+          await prisma.user.update({ where: { id: user.id }, data: { isOnline: false, lastSeen } });
+          io.emit("user_offline", { userId: user.id, lastSeen: lastSeen.toISOString() });
+        } else {
+          socketUsers.set(user.id, sockets);
+        }
+      }
     });
   });
 };
