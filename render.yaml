@@ -25,3 +25,9 @@ services:
         value: 7d
       - key: COOKIE_DOMAIN
         sync: false
+      - key: EMAIL_VERIFICATION_CODE_TTL_MIN
+        value: 10
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false

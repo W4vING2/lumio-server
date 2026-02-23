@@ -10,6 +10,7 @@ import { prisma } from "../../db/prisma.js";
 import { asyncHandler, HttpError } from "../../utils/http.js";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt.js";
 import { isPrismaKnownRequestError } from "../../utils/prisma.js";
+import { sendVerificationEmail } from "../../utils/email.js";
 
 const uploadDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../uploads/avatars");
 const upload = multer({ dest: uploadDir });
@@ -83,7 +84,7 @@ const sendVerificationCode = async (user: { id: string; email: string }): Promis
     }
   });
 
-  process.stdout.write(`[Lumio email verification] ${user.email}: ${code}\n`);
+  await sendVerificationEmail(user.email, code);
   return code;
 };
 
