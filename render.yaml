@@ -4,13 +4,11 @@ services:
     env: node
     plan: free
     rootDir: .
-    buildCommand: npm install && npm run prisma:deploy && npm run build
-    startCommand: npm run start
+    buildCommand: npm install --include=dev && npm run prisma:deploy && npm run build
+    startCommand: NODE_ENV=production npm run start
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
-      - key: NODE_ENV
-        value: production
       - key: PORT
         value: 10000
       - key: CLIENT_URL
