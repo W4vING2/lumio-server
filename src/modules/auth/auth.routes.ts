@@ -84,7 +84,12 @@ const sendVerificationCode = async (user: { id: string; email: string }): Promis
     }
   });
 
-  await sendVerificationEmail(user.email, code);
+  try {
+    await sendVerificationEmail(user.email, code);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "SMTP send failed";
+    throw new HttpError(503, "Не удалось отправить код подтверждения. Проверь настройки SMTP.", { reason: message });
+  }
   return code;
 };
 
