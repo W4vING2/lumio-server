@@ -1,2 +1,8 @@
-.env
 node_modules
+dist
+.env
+uploads/*
+!uploads/.gitkeep
+!uploads/avatars/.gitkeep
+!uploads/chats/.gitkeep
+!uploads/files/.gitkeep

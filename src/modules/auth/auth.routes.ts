@@ -4,12 +4,12 @@ import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
 import { createHash } from "node:crypto";
 import multer from "multer";
-import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../../config/env.js";
 import { prisma } from "../../db/prisma.js";
 import { asyncHandler, HttpError } from "../../utils/http.js";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../../utils/jwt.js";
+import { isPrismaKnownRequestError } from "../../utils/prisma.js";
 
 const uploadDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../uploads/avatars");
 const upload = multer({ dest: uploadDir });
@@ -70,7 +70,7 @@ router.post(
         }
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (isPrismaKnownRequestError(error) && error.code === "P2002") {
         throw new HttpError(409, "Username or email already taken");
       }
       throw error;

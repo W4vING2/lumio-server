@@ -1,5 +1,5 @@
 import type { Message, Reaction, MessageRead, User } from "@prisma/client";
-import type { MessageDto } from "@lumio/shared";
+import type { MessageDto } from "../types/shared.js";
 
 type MessageWithRelations = Message & {
   author: Pick<User, "id" | "username" | "avatar" | "displayName">;

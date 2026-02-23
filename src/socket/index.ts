@@ -1,5 +1,5 @@
 import type { Server } from "socket.io";
-import type { SocketClientToServer, SocketServerToClient } from "@lumio/shared";
+import type { SocketClientToServer, SocketServerToClient } from "../types/shared.js";
 import { prisma } from "../db/prisma.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
 import { asyncHandler, HttpError } from "../../utils/http.js";
-import type { ChatSummary } from "@lumio/shared";
+import type { ChatSummary } from "../../types/shared.js";
 
 const uploadDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../uploads/chats");
 const upload = multer({ dest: uploadDir });

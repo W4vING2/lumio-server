@@ -16,14 +16,14 @@ export const signAccessToken = (user: User): string =>
   jwt.sign(
     { id: user.id, username: user.username, email: user.email, type: "access" } satisfies TokenPayload,
     env.JWT_ACCESS_SECRET,
-    { expiresIn: env.JWT_ACCESS_EXPIRES }
+    { expiresIn: env.JWT_ACCESS_EXPIRES as unknown as jwt.SignOptions["expiresIn"] }
   );
 
 export const signRefreshToken = (user: User): string =>
   jwt.sign(
     { id: user.id, username: user.username, email: user.email, type: "refresh" } satisfies TokenPayload,
     env.JWT_REFRESH_SECRET,
-    { expiresIn: env.JWT_REFRESH_EXPIRES }
+    { expiresIn: env.JWT_REFRESH_EXPIRES as unknown as jwt.SignOptions["expiresIn"] }
   );
 
 export const verifyAccessToken = (token: string): AuthUser => {

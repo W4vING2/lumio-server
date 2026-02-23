@@ -2,11 +2,11 @@ import { Router } from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import multer from "multer";
-import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../db/prisma.js";
 import { authMiddleware } from "../../middleware/auth.js";
 import { asyncHandler, HttpError } from "../../utils/http.js";
+import { isPrismaKnownRequestError } from "../../utils/prisma.js";
 
 const uploadDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../uploads/avatars");
 const upload = multer({ dest: uploadDir });
@@ -70,7 +70,7 @@ router.patch(
 
       res.json(updated);
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (isPrismaKnownRequestError(error) && error.code === "P2002") {
         throw new HttpError(409, "Username is already taken");
       }
       throw error;
