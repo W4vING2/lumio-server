@@ -44,6 +44,7 @@ const setAccessCookie = (res: import("express").Response, accessToken: string): 
 const generateVerificationCode = (): string => String(Math.floor(100000 + Math.random() * 900000));
 
 const hashCode = (code: string): string => createHash("sha256").update(code).digest("hex");
+const verificationExpiresAt = (): Date => new Date(Date.now() + verificationCodeTtlMs);
 
 const issueSession = async (
   res: import("express").Response,
@@ -80,12 +81,30 @@ const sendVerificationCode = async (user: { id: string; email: string }): Promis
     where: { id: user.id },
     data: {
       emailVerificationCodeHash: hashCode(code),
-      emailVerificationExpiresAt: new Date(Date.now() + verificationCodeTtlMs)
+      emailVerificationExpiresAt: verificationExpiresAt()
     }
   });
 
   try {
     await sendVerificationEmail(user.email, code);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "SMTP send failed";
+    throw new HttpError(503, "Не удалось отправить код подтверждения. Проверь настройки SMTP.", { reason: message });
+  }
+  return code;
+};
+
+const sendPendingVerificationCode = async (pendingId: string, email: string): Promise<string> => {
+  const code = generateVerificationCode();
+  await prisma.pendingRegistration.update({
+    where: { id: pendingId },
+    data: {
+      emailVerificationCodeHash: hashCode(code),
+      emailVerificationExpiresAt: verificationExpiresAt()
+    }
+  });
+  try {
+    await sendVerificationEmail(email, code);
   } catch (error) {
     const message = error instanceof Error ? error.message : "SMTP send failed";
     throw new HttpError(503, "Не удалось отправить код подтверждения. Проверь настройки SMTP.", { reason: message });
@@ -111,18 +130,35 @@ router.post(
       throw new HttpError(409, existing.username === username ? "Username already taken" : "Email already taken");
     }
 
-    const passwordHash = await bcrypt.hash(body.password, 10);
+    const existingPendingByUsername = await prisma.pendingRegistration.findUnique({
+      where: { username },
+      select: { id: true, email: true }
+    });
+    if (existingPendingByUsername && existingPendingByUsername.email !== email) {
+      throw new HttpError(409, "Username already taken");
+    }
 
-    let created;
+    const passwordHash = await bcrypt.hash(body.password, 10);
+    const code = generateVerificationCode();
     try {
-      created = await prisma.user.create({
-        data: {
+      await prisma.pendingRegistration.upsert({
+        where: { email },
+        update: {
+          username,
+          passwordHash,
+          displayName: body.username.trim(),
+          avatar: req.file ? `/uploads/avatars/${req.file.filename}` : null,
+          emailVerificationCodeHash: hashCode(code),
+          emailVerificationExpiresAt: verificationExpiresAt()
+        },
+        create: {
           username,
           email,
           passwordHash,
-          isEmailVerified: false,
           displayName: body.username.trim(),
-          avatar: req.file ? `/uploads/avatars/${req.file.filename}` : null
+          avatar: req.file ? `/uploads/avatars/${req.file.filename}` : null,
+          emailVerificationCodeHash: hashCode(code),
+          emailVerificationExpiresAt: verificationExpiresAt()
         }
       });
     } catch (error) {
@@ -131,11 +167,16 @@ router.post(
       }
       throw error;
     }
+    try {
+      await sendVerificationEmail(email, code);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "SMTP send failed";
+      throw new HttpError(503, "Не удалось отправить код подтверждения. Проверь настройки SMTP.", { reason: message });
+    }
 
-    const code = await sendVerificationCode(created);
     res.status(201).json({
       requiresEmailVerification: true,
-      email: created.email,
+      email,
       ...(isProd ? {} : { debugCode: code })
     });
   })
@@ -148,7 +189,19 @@ router.post(
     const email = body.email.trim().toLowerCase();
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
-      throw new HttpError(401, "Invalid credentials");
+      const pending = await prisma.pendingRegistration.findUnique({
+        where: { email },
+        select: { id: true, email: true }
+      });
+      if (!pending) {
+        throw new HttpError(401, "Invalid credentials");
+      }
+      const code = await sendPendingVerificationCode(pending.id, pending.email);
+      throw new HttpError(403, isProd ? "Email is not verified" : `Email is not verified (code: ${code})`, {
+        requiresEmailVerification: true,
+        email: pending.email,
+        ...(isProd ? {} : { debugCode: code })
+      });
     }
 
     const valid = await bcrypt.compare(body.password, user.passwordHash);
@@ -175,6 +228,20 @@ router.post(
   asyncHandler(async (req, res) => {
     const { email } = z.object({ email: z.string().email() }).parse(req.body);
     const normalizedEmail = email.trim().toLowerCase();
+    const pending = await prisma.pendingRegistration.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true }
+    });
+    if (pending) {
+      const code = await sendPendingVerificationCode(pending.id, pending.email);
+      res.status(200).json({
+        ok: true,
+        email: pending.email,
+        ...(isProd ? {} : { debugCode: code })
+      });
+      return;
+    }
+
     const user = await prisma.user.findUnique({
       where: { email: normalizedEmail },
       select: { id: true, email: true, isEmailVerified: true }
@@ -207,6 +274,56 @@ router.post(
       .parse(req.body);
 
     const normalizedEmail = email.trim().toLowerCase();
+    const pending = await prisma.pendingRegistration.findUnique({ where: { email: normalizedEmail } });
+    if (pending) {
+      if (pending.emailVerificationExpiresAt.getTime() < Date.now()) {
+        throw new HttpError(400, "Verification code expired");
+      }
+      if (hashCode(code) !== pending.emailVerificationCodeHash) {
+        throw new HttpError(400, "Invalid verification code");
+      }
+
+      const created = await prisma.$transaction(async (tx) => {
+        const userByEmail = await tx.user.findUnique({ where: { email: pending.email }, select: { id: true } });
+        if (userByEmail) throw new HttpError(409, "Email already taken");
+        const userByUsername = await tx.user.findUnique({ where: { username: pending.username }, select: { id: true } });
+        if (userByUsername) throw new HttpError(409, "Username already taken");
+
+        const user = await tx.user.create({
+          data: {
+            username: pending.username,
+            email: pending.email,
+            passwordHash: pending.passwordHash,
+            displayName: pending.displayName,
+            avatar: pending.avatar,
+            bio: pending.bio,
+            isEmailVerified: true,
+            emailVerificationCodeHash: null,
+            emailVerificationExpiresAt: null
+          }
+        });
+        await tx.pendingRegistration.delete({ where: { id: pending.id } });
+        return user;
+      });
+
+      const { accessToken, refreshToken } = await issueSession(res, created);
+      res.json({
+        user: {
+          id: created.id,
+          username: created.username,
+          email: created.email,
+          displayName: created.displayName,
+          avatar: created.avatar,
+          bio: created.bio,
+          isOnline: created.isOnline,
+          lastSeen: created.lastSeen
+        },
+        accessToken,
+        refreshToken
+      });
+      return;
+    }
+
     const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (!user) throw new HttpError(404, "User not found");
     if (user.isEmailVerified) throw new HttpError(400, "Email already verified");

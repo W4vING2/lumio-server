@@ -65,6 +65,19 @@ model User {
   receivedCalls Call[]         @relation("callee")
 }
 
+model PendingRegistration {
+  id                         String   @id @default(cuid())
+  username                   String   @unique
+  email                      String   @unique
+  passwordHash               String
+  displayName                String?
+  avatar                     String?
+  bio                        String?
+  emailVerificationCodeHash  String
+  emailVerificationExpiresAt DateTime
+  createdAt                  DateTime @default(now())
+}
+
 model Chat {
   id        String   @id @default(cuid())
   type      ChatType
