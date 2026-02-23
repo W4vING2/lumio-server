@@ -6,3 +6,4 @@ uploads/*
 !uploads/avatars/.gitkeep
 !uploads/chats/.gitkeep
 !uploads/files/.gitkeep
+.idea

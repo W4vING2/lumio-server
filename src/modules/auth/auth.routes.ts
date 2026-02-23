@@ -28,6 +28,7 @@ const loginSchema = z.object({
 
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 const isProd = env.NODE_ENV === "production";
+const verificationCodeTtlMs = env.EMAIL_VERIFICATION_CODE_TTL_MIN * 60 * 1000;
 
 const setAccessCookie = (res: import("express").Response, accessToken: string): void => {
   res.cookie("accessToken", accessToken, {
@@ -37,6 +38,53 @@ const setAccessCookie = (res: import("express").Response, accessToken: string): 
     path: "/",
     maxAge: 15 * 60 * 1000
   });
+};
+
+const generateVerificationCode = (): string => String(Math.floor(100000 + Math.random() * 900000));
+
+const hashCode = (code: string): string => createHash("sha256").update(code).digest("hex");
+
+const issueSession = async (
+  res: import("express").Response,
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    displayName: string | null;
+    avatar: string | null;
+    bio: string | null;
+    isOnline: boolean;
+    lastSeen: Date | null;
+  }
+): Promise<{ accessToken: string; refreshToken: string }> => {
+  const accessToken = signAccessToken(user);
+  const refreshToken = signRefreshToken(user);
+  const refreshHash = createHash("sha256").update(refreshToken).digest("hex");
+
+  await prisma.refreshToken.create({
+    data: {
+      tokenHash: refreshHash,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS)
+    }
+  });
+
+  setAccessCookie(res, accessToken);
+  return { accessToken, refreshToken };
+};
+
+const sendVerificationCode = async (user: { id: string; email: string }): Promise<string> => {
+  const code = generateVerificationCode();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      emailVerificationCodeHash: hashCode(code),
+      emailVerificationExpiresAt: new Date(Date.now() + verificationCodeTtlMs)
+    }
+  });
+
+  process.stdout.write(`[Lumio email verification] ${user.email}: ${code}\n`);
+  return code;
 };
 
 router.post(
@@ -66,6 +114,7 @@ router.post(
           username,
           email,
           passwordHash,
+          isEmailVerified: false,
           displayName: body.username.trim(),
           avatar: req.file ? `/uploads/avatars/${req.file.filename}` : null
         }
@@ -77,32 +126,11 @@ router.post(
       throw error;
     }
 
-    const accessToken = signAccessToken(created);
-    const refreshToken = signRefreshToken(created);
-    const refreshHash = createHash("sha256").update(refreshToken).digest("hex");
-
-    await prisma.refreshToken.create({
-      data: {
-        tokenHash: refreshHash,
-        userId: created.id,
-        expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS)
-      }
-    });
-
-    setAccessCookie(res, accessToken);
+    const code = await sendVerificationCode(created);
     res.status(201).json({
-      user: {
-        id: created.id,
-        username: created.username,
-        email: created.email,
-        displayName: created.displayName,
-        avatar: created.avatar,
-        bio: created.bio,
-        isOnline: created.isOnline,
-        lastSeen: created.lastSeen
-      },
-      accessToken,
-      refreshToken
+      requiresEmailVerification: true,
+      email: created.email,
+      ...(isProd ? {} : { debugCode: code })
     });
   })
 );
@@ -122,20 +150,94 @@ router.post(
       throw new HttpError(401, "Invalid credentials");
     }
 
-    const accessToken = signAccessToken(user);
-    const refreshToken = signRefreshToken(user);
-    const refreshHash = createHash("sha256").update(refreshToken).digest("hex");
+    if (!user.isEmailVerified) {
+      const code = await sendVerificationCode(user);
+      throw new HttpError(403, isProd ? "Email is not verified" : `Email is not verified (code: ${code})`, {
+        requiresEmailVerification: true,
+        email: user.email,
+        ...(isProd ? {} : { debugCode: code })
+      });
+    }
 
-    await prisma.refreshToken.create({
+    const { accessToken, refreshToken } = await issueSession(res, user);
+    res.json({ accessToken, refreshToken });
+  })
+);
+
+router.post(
+  "/send-verification-code",
+  asyncHandler(async (req, res) => {
+    const { email } = z.object({ email: z.string().email() }).parse(req.body);
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true, isEmailVerified: true }
+    });
+
+    if (!user) {
+      throw new HttpError(404, "User not found");
+    }
+    if (user.isEmailVerified) {
+      throw new HttpError(400, "Email already verified");
+    }
+
+    const code = await sendVerificationCode(user);
+    res.status(200).json({
+      ok: true,
+      email: user.email,
+      ...(isProd ? {} : { debugCode: code })
+    });
+  })
+);
+
+router.post(
+  "/verify-email-code",
+  asyncHandler(async (req, res) => {
+    const { email, code } = z
+      .object({
+        email: z.string().email(),
+        code: z.string().trim().length(6).regex(/^\d{6}$/)
+      })
+      .parse(req.body);
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    if (!user) throw new HttpError(404, "User not found");
+    if (user.isEmailVerified) throw new HttpError(400, "Email already verified");
+    if (!user.emailVerificationCodeHash || !user.emailVerificationExpiresAt) {
+      throw new HttpError(400, "Verification code not requested");
+    }
+    if (user.emailVerificationExpiresAt.getTime() < Date.now()) {
+      throw new HttpError(400, "Verification code expired");
+    }
+    if (hashCode(code) !== user.emailVerificationCodeHash) {
+      throw new HttpError(400, "Invalid verification code");
+    }
+
+    const verified = await prisma.user.update({
+      where: { id: user.id },
       data: {
-        tokenHash: refreshHash,
-        userId: user.id,
-        expiresAt: new Date(Date.now() + REFRESH_TOKEN_MAX_AGE_MS)
+        isEmailVerified: true,
+        emailVerificationCodeHash: null,
+        emailVerificationExpiresAt: null
       }
     });
 
-    setAccessCookie(res, accessToken);
-    res.json({ accessToken, refreshToken });
+    const { accessToken, refreshToken } = await issueSession(res, verified);
+    res.json({
+      user: {
+        id: verified.id,
+        username: verified.username,
+        email: verified.email,
+        displayName: verified.displayName,
+        avatar: verified.avatar,
+        bio: verified.bio,
+        isOnline: verified.isOnline,
+        lastSeen: verified.lastSeen
+      },
+      accessToken,
+      refreshToken
+    });
   })
 );
 

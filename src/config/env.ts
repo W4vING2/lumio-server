@@ -12,7 +12,8 @@ const schema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16),
   JWT_ACCESS_EXPIRES: z.string().default("15m"),
   JWT_REFRESH_EXPIRES: z.string().default("7d"),
-  COOKIE_DOMAIN: z.string().default("localhost")
+  COOKIE_DOMAIN: z.string().default("localhost"),
+  EMAIL_VERIFICATION_CODE_TTL_MIN: z.coerce.number().int().positive().default(10)
 });
 
 export const env = schema.parse(process.env);

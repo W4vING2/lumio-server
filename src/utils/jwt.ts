@@ -8,18 +8,20 @@ export interface AuthUser {
   email: string;
 }
 
+type JwtUser = Pick<User, "id" | "username" | "email">;
+
 interface TokenPayload extends AuthUser {
   type: "access" | "refresh";
 }
 
-export const signAccessToken = (user: User): string =>
+export const signAccessToken = (user: JwtUser): string =>
   jwt.sign(
     { id: user.id, username: user.username, email: user.email, type: "access" } satisfies TokenPayload,
     env.JWT_ACCESS_SECRET,
     { expiresIn: env.JWT_ACCESS_EXPIRES as unknown as jwt.SignOptions["expiresIn"] }
   );
 
-export const signRefreshToken = (user: User): string =>
+export const signRefreshToken = (user: JwtUser): string =>
   jwt.sign(
     { id: user.id, username: user.username, email: user.email, type: "refresh" } satisfies TokenPayload,
     env.JWT_REFRESH_SECRET,

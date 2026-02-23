@@ -46,6 +46,9 @@ model User {
   username     String    @unique
   email        String    @unique
   passwordHash String
+  isEmailVerified          Boolean   @default(false)
+  emailVerificationCodeHash String?
+  emailVerificationExpiresAt DateTime?
   displayName  String?
   avatar       String?
   bio          String?

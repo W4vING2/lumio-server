@@ -31,13 +31,17 @@ const run = async (): Promise<void> => {
       update: {
         username: user.username,
         displayName: user.displayName,
-        passwordHash
+        passwordHash,
+        isEmailVerified: true,
+        emailVerificationCodeHash: null,
+        emailVerificationExpiresAt: null
       },
       create: {
         username: user.username,
         email: user.email,
         displayName: user.displayName,
-        passwordHash
+        passwordHash,
+        isEmailVerified: true
       }
     });
   }
