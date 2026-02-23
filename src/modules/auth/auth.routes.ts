@@ -27,12 +27,13 @@ const loginSchema = z.object({
 });
 
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+const isProd = env.NODE_ENV === "production";
 
 const setAccessCookie = (res: import("express").Response, accessToken: string): void => {
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    sameSite: "lax",
-    secure: env.NODE_ENV === "production",
+    sameSite: isProd ? "none" : "lax",
+    secure: isProd,
     path: "/",
     maxAge: 15 * 60 * 1000
   });
@@ -184,7 +185,11 @@ router.post(
       const tokenHash = createHash("sha256").update(refreshToken).digest("hex");
       await prisma.refreshToken.updateMany({ where: { tokenHash }, data: { revokedAt: new Date() } });
     }
-    res.clearCookie("accessToken", { path: "/" });
+    res.clearCookie("accessToken", {
+      path: "/",
+      sameSite: isProd ? "none" : "lax",
+      secure: isProd
+    });
     res.status(204).send();
   })
 );
