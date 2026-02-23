@@ -17,7 +17,7 @@ const io = new Server(server, {
 setupSocket(io);
 app.set("io", io);
 
-server.listen(env.PORT, () => {
+server.listen(env.PORT, "0.0.0.0", () => {
   process.stdout.write(`Lumio server running at http://localhost:${env.PORT}
 `);
 });
